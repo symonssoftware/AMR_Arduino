@@ -1,32 +1,12 @@
 
-const byte MAX_RX_DATA_BUFFER_SIZE = 255;
-byte rxBuffer[MAX_RX_DATA_BUFFER_SIZE];
-
-const byte WAITING_FOR_HEADER_BYTE1 = 0;
-const byte WAITING_FOR_HEADER_BYTE2 = 1;
-const byte WAITING_FOR_DATA_LENGTH_BYTE = 2;
-const byte WAITING_FOR_CMD_BYTE = 3;
-const byte WAITING_FOR_DATA_BYTES = 4;
-const byte WAITING_FOR_CRC_BYTE1 = 5;
-const byte WAITING_FOR_CRC_BYTE2 = 6;
-
-const byte HEADER_BYTE1_POSITION = 0;
-const byte HEADER_BYTE2_POSITION = 1;
-const byte DATA_LENGTH_BYTE_POSITION = 2;
-const byte CMD_BYTE_POSITION = 3;
-const byte START_OF_DATA_POSITION = 4;
-
-byte msgReceiverState = WAITING_FOR_HEADER_BYTE1;
-
 /************************************************************
  * setup
  */
 void setup() {
   Serial.begin(115200);
-  Serial2.begin(115200);
-
-  Serial.flush();
-  Serial2.flush();
+  
+  piSerialSetup();
+  lcdSetup();
 }
 
 /************************************************************
@@ -34,161 +14,6 @@ void setup() {
  */
 void loop() {
 
-  byte nextRxByte;
-  
-  static byte dataIndex = 0;
-  static byte crc1 = 0;
-  static byte crc2 = 0;
-
-  if (Serial2.available()) {
-
-    switch (msgReceiverState) {
-      
-      case WAITING_FOR_HEADER_BYTE1:
-        nextRxByte = Serial2.read();
-        
-        if (nextRxByte == 0xFF) {
-          Serial.println("New message");
-          rxBuffer[HEADER_BYTE1_POSITION] = nextRxByte;
-          msgReceiverState = WAITING_FOR_HEADER_BYTE2;
-        }
-        else {
-          clearRxBuffer();
-        }
-      break;
-      case WAITING_FOR_HEADER_BYTE2:
-        nextRxByte = Serial2.read();
-        
-        if (nextRxByte == 0xFE) {
-          Serial.println("2nd header byte read in");
-          rxBuffer[HEADER_BYTE2_POSITION] = nextRxByte;
-          msgReceiverState = WAITING_FOR_DATA_LENGTH_BYTE;
-        }
-        else {
-          clearRxBuffer();
-        }
-
-      break;
-      case WAITING_FOR_DATA_LENGTH_BYTE:
-        nextRxByte = Serial2.read();
-        Serial.print("Data length byte read in: ");
-        Serial.println(nextRxByte, HEX);
-        rxBuffer[DATA_LENGTH_BYTE_POSITION] = nextRxByte;
-        msgReceiverState = WAITING_FOR_CMD_BYTE;
-      break;
-      case WAITING_FOR_CMD_BYTE:
-        nextRxByte = Serial2.read();
-        Serial.print("Cmd byte read in: ");
-        Serial.println(nextRxByte, HEX);
-        rxBuffer[CMD_BYTE_POSITION] = nextRxByte;
-        dataIndex = 0;
-        crc1 = 0;
-        crc2 = 0;
-        msgReceiverState = WAITING_FOR_DATA_BYTES;
-      break;
-      case WAITING_FOR_DATA_BYTES:
-        if (dataIndex < rxBuffer[DATA_LENGTH_BYTE_POSITION]) {
-          nextRxByte = Serial2.read();
-          Serial.print("Reading data... ");
-          Serial.println(nextRxByte, HEX);
-          rxBuffer[dataIndex + START_OF_DATA_POSITION] = nextRxByte;
-          dataIndex++;
-        }
-        else {
-          Serial.println("Done with data");
-          msgReceiverState = WAITING_FOR_CRC_BYTE1;
-        }
-      break;
-      case WAITING_FOR_CRC_BYTE1:
-        crc1 = Serial2.read();
-        Serial.print("Reading first CRC byte:");
-        Serial.println(crc1, HEX);
-        msgReceiverState = WAITING_FOR_CRC_BYTE2;
-      break;
-      case WAITING_FOR_CRC_BYTE2:
-        crc2 = Serial2.read();
-        Serial.print("Reading second CRC byte:");
-        Serial.println(crc2, HEX);
-        uint16_t crc = crc16(&rxBuffer[START_OF_DATA_POSITION], 
-                             rxBuffer[DATA_LENGTH_BYTE_POSITION]);
-
-        if ((crc1 == (byte)((crc >> 8) & 0xff)) &&
-            (crc2 == (byte)crc & 0xff)) {
-          Serial.println(" -- Message is valid");
-          Serial.println("");
-          sendResponse(rxBuffer[CMD_BYTE_POSITION], true);
-        }
-        else {
-          Serial.println(" -- Message is borked");
-          Serial.println("");
-          sendResponse(rxBuffer[CMD_BYTE_POSITION], false);
-        }
-
-        clearRxBuffer();
-        msgReceiverState = WAITING_FOR_HEADER_BYTE1;
-      break;
-      default:
-        Serial.println("Invalid msgReceiverState");
-    }
-  }
-}
-
-/************************************************************
- * clearRxBuffer
- */
-void clearRxBuffer() {
-  Serial2.flush();
-  for (int i = 0; i < MAX_RX_DATA_BUFFER_SIZE; i++) {
-    rxBuffer[i] = 0x00;
-  }
-}
-
-/************************************************************
- * sendResponse
- */
-void sendResponse(byte cmd, bool isAck) {
-  byte txBuffer[256];
-
-  txBuffer[0] = 0xFF;
-  txBuffer[1] = 0xFE;
-  txBuffer[2] = 0x01;
-
-  if (isAck) {
-    txBuffer[3] = 0x00;
-  }
-  else {
-    txBuffer[3] = 0x01;
-  }
-
-  txBuffer[4] = cmd;
-
-  uint16_t crc = crc16(&txBuffer[START_OF_DATA_POSITION], txBuffer[2]);
-
-  txBuffer[5] = (byte)((crc >> 8) & 0xff);
-  txBuffer[6] = (byte)crc & 0xff;
-
-  Serial2.write(txBuffer, 7);
-}
-
-/************************************************************
- * crc16
- */
-uint16_t crc16(const unsigned char* data_p, unsigned char length) {
-
-  unsigned int reg_crc = 0xFFFF;
-
-  while (length--) {
-    reg_crc ^= *data_p++;
-
-    for (int j = 0; j < 8; j++) {
-      if (reg_crc & 0x01) {
-        reg_crc = (reg_crc >> 1) ^ 0xA001;
-      }
-      else {
-        reg_crc = reg_crc >> 1;
-      }
-    }
-  }
-
-  return reg_crc;
+  piSerialLoop();
+  lcdLoop();
 }
