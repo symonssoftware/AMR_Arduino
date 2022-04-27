@@ -19,6 +19,9 @@ byte msgReceiverState = WAITING_FOR_HEADER_BYTE1;
 
 const byte SERIAL_COMMAND_BATTERY_VOLTAGE = 0x02;
 const byte SERIAL_COMMAND_HEADING = 0x03;
+const byte SERIAL_COMMAND_LED = 0x04;
+
+const byte SERIAL_DEBUG = 0;
 
 /************************************************************
  * piSerialSetup
@@ -47,7 +50,7 @@ void piSerialLoop() {
         nextRxByte = Serial2.read();
         
         if (nextRxByte == 0xFF) {
-          //Serial.println("New message");
+          if (SERIAL_DEBUG) Serial.println("New message");
           rxBuffer[HEADER_BYTE1_POSITION] = nextRxByte;
           msgReceiverState = WAITING_FOR_HEADER_BYTE2;
         }
@@ -59,7 +62,7 @@ void piSerialLoop() {
         nextRxByte = Serial2.read();
         
         if (nextRxByte == 0xFE) {
-          //Serial.println("2nd header byte read in");
+          if (SERIAL_DEBUG) Serial.println("2nd header byte read in");
           rxBuffer[HEADER_BYTE2_POSITION] = nextRxByte;
           msgReceiverState = WAITING_FOR_DATA_LENGTH_BYTE;
         }
@@ -70,15 +73,15 @@ void piSerialLoop() {
       break;
       case WAITING_FOR_DATA_LENGTH_BYTE:
         nextRxByte = Serial2.read();
-        //Serial.print("Data length byte read in: ");
-        //Serial.println(nextRxByte, HEX);
+        if (SERIAL_DEBUG) Serial.print("Data length byte read in: ");
+        if (SERIAL_DEBUG) Serial.println(nextRxByte, HEX);
         rxBuffer[DATA_LENGTH_BYTE_POSITION] = nextRxByte;
         msgReceiverState = WAITING_FOR_CMD_BYTE;
       break;
       case WAITING_FOR_CMD_BYTE:
         nextRxByte = Serial2.read();
-        //Serial.print("Cmd byte read in: ");
-        //Serial.println(nextRxByte, HEX);
+        if (SERIAL_DEBUG) Serial.print("Cmd byte read in: ");
+        if (SERIAL_DEBUG) Serial.println(nextRxByte, HEX);
         rxBuffer[CMD_BYTE_POSITION] = nextRxByte;
         dataIndex = 0;
         crc1 = 0;
@@ -88,33 +91,33 @@ void piSerialLoop() {
       case WAITING_FOR_DATA_BYTES:
         if (dataIndex < rxBuffer[DATA_LENGTH_BYTE_POSITION]) {
           nextRxByte = Serial2.read();
-          //Serial.print("Reading data... ");
-          //Serial.println(nextRxByte, HEX);
+          if (SERIAL_DEBUG) Serial.print("Reading data... ");
+          if (SERIAL_DEBUG) Serial.println(nextRxByte, HEX);
           rxBuffer[dataIndex + START_OF_DATA_POSITION] = nextRxByte;
           dataIndex++;
         }
         else {
-          //Serial.println("Done with data");
+          if (SERIAL_DEBUG) Serial.println("Done with data");
           msgReceiverState = WAITING_FOR_CRC_BYTE1;
         }
       break;
       case WAITING_FOR_CRC_BYTE1:
         crc1 = Serial2.read();
-        //Serial.print("Reading first CRC byte:");
-        //Serial.println(crc1, HEX);
+        if (SERIAL_DEBUG) Serial.print("Reading first CRC byte:");
+        if (SERIAL_DEBUG) Serial.println(crc1, HEX);
         msgReceiverState = WAITING_FOR_CRC_BYTE2;
       break;
       case WAITING_FOR_CRC_BYTE2:
         crc2 = Serial2.read();
-        //Serial.print("Reading second CRC byte:");
-        //Serial.println(crc2, HEX);
+        if (SERIAL_DEBUG) Serial.print("Reading second CRC byte:");
+        if (SERIAL_DEBUG) Serial.println(crc2, HEX);
         uint16_t crc = crc16(&rxBuffer[START_OF_DATA_POSITION], 
                              rxBuffer[DATA_LENGTH_BYTE_POSITION]);
 
         if ((crc1 == (byte)((crc >> 8) & 0xff)) &&
             (crc2 == (byte)crc & 0xff)) {
-          //Serial.println(" -- Message is valid");
-          //Serial.println("");
+          if (SERIAL_DEBUG) Serial.println(" -- Message is valid");
+          if (SERIAL_DEBUG) Serial.println("");
           sendResponse(rxBuffer[CMD_BYTE_POSITION], true);
           processMessage();
         }
@@ -202,6 +205,7 @@ void processMessage() {
 
   switch (cmd) {
     case SERIAL_COMMAND_BATTERY_VOLTAGE:
+    
       union {
         byte dataArray[4];
         float batteryVoltage;
@@ -219,6 +223,7 @@ void processMessage() {
       lcd.print(String(batteryVoltageUnion.batteryVoltage, 2) + "V");
     break;
     case SERIAL_COMMAND_HEADING:
+    
       union {
         byte dataArray[4];
         float heading;
@@ -235,7 +240,15 @@ void processMessage() {
       lcd.setCursor(9,1);
       lcd.print(String(headingUnion.heading, 2) + " deg");
     break;
+    case SERIAL_COMMAND_LED:
+      Serial.println("LED Message");
+      setLedColor(255,0,0);
+      setLedColor(rxBuffer[START_OF_DATA_POSITION], 
+                  rxBuffer[START_OF_DATA_POSITION + 1], 
+                  rxBuffer[START_OF_DATA_POSITION + 2]);
+    break;
     default:
+    
       Serial.print("Invalid command: ");
       Serial.println(cmd, HEX);
   }
